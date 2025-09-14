@@ -16,17 +16,23 @@ function App() {
   const [isTyping, setIsTyping] = useState(false);
 
   useEffect(() => {
-    const socket = socketService.connect();
-
-    socket.on('connect', () => {
+    // Connect to WebSocket
+    socketService.connect().then(() => {
       setIsConnected(true);
-    });
-
-    socket.on('disconnect', () => {
+      console.log('✅ WebSocket connected successfully');
+    }).catch((error) => {
+      console.error('❌ Failed to connect to WebSocket:', error);
       setIsConnected(false);
     });
 
+    // Set up event handlers
+    socketService.on('connected', () => {
+      setIsConnected(true);
+      console.log('✅ WebSocket connection confirmed');
+    });
+
     socketService.on('session_started', (data) => {
+      console.log('🚀 Frontend: Session started with ID:', data.session_id);
       setSessionId(data.session_id);
       setCurrentQuestion(data.first_question);
       setQuestionsAnswered(1);
@@ -75,6 +81,7 @@ function App() {
 
     return () => {
       socketService.disconnect();
+      setIsConnected(false);
     };
   }, []);
 
@@ -84,7 +91,7 @@ function App() {
 
   const handleSendMessage = (message: string) => {
     if (sessionId) {
-      socketService.sendMessage(sessionId, message);
+      socketService.sendUserMessage(sessionId, message);
     }
   };
 

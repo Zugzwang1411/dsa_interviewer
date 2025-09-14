@@ -1,45 +1,77 @@
-from flask import Flask, jsonify
-from flask_socketio import SocketIO
-from flask_cors import CORS
-import os
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+import logging
+from .config import Config
+from .routes import router as api_router
+from .websocket_handlers import websocket_router
 
-def create_app():
-    app = Flask(__name__)
-    app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET', 'dev-secret-key')
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+config = Config()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager"""
+    # Startup
+    logger.info("Starting DSA Interviewer FastAPI application")
+    yield
+    # Shutdown
+    logger.info("Shutting down DSA Interviewer FastAPI application")
+
+def create_app() -> FastAPI:
+    """Create and configure FastAPI application"""
+    app = FastAPI(
+        title="DSA Interviewer API",
+        description="AI-powered Data Structures & Algorithms Interview Platform",
+        version="1.0.0",
+        lifespan=lifespan
+    )
     
-    CORS(app, cors_allowed_origins="*")
-    socketio = SocketIO(app, 
-                       cors_allowed_origins="*", 
-                       async_mode='eventlet',
-                       transports=['websocket', 'polling'],
-                       allow_upgrades=True)
+    # Configure CORS
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     
-    # Root route
-    @app.route('/')
-    def root():
-        return jsonify({
+    # Root endpoint
+    @app.get("/", response_model=dict)
+    async def root():
+        return {
             "message": "DSA Interviewer Backend API",
             "version": "1.0.0",
             "status": "running",
             "endpoints": {
                 "start_session": "POST /api/session/start",
-                "send_message": "POST /api/session/<session_id>/message",
-                "get_state": "GET /api/session/<session_id>/state",
-                "end_session": "POST /api/session/<session_id>/end",
-                "export_session": "GET /api/session/<session_id>/export"
+                "send_message": "POST /api/session/{session_id}/message",
+                "get_state": "GET /api/session/{session_id}/state",
+                "end_session": "POST /api/session/{session_id}/end",
+                "export_session": "GET /api/session/{session_id}/export"
             },
             "frontend_url": "http://13.203.226.83:3000",
             "chainlit_url": "http://13.203.226.83:8001"
-        })
+        }
     
-    from .routes import bp as routes_bp
-    app.register_blueprint(routes_bp)
+    # Include routers
+    app.include_router(api_router, prefix="/api")
+    app.include_router(websocket_router)
     
-    from . import socket_handlers
-    socket_handlers.init_socketio(socketio)
-    
-    return app, socketio
+    return app
+
+# Create the FastAPI application
+app = create_app()
 
 if __name__ == '__main__':
-    app, socketio = create_app()
-    socketio.run(app, debug=True, host='0.0.0.0', port=8000)
+    import uvicorn
+    uvicorn.run(
+        "app.main:app",
+        host=config.HOST,
+        port=config.PORT,
+        reload=config.DEBUG,
+        log_level="info"
+    )

@@ -47,6 +47,7 @@ export interface InterviewSummary {
 }
 
 export interface SocketEvents {
+  connected: { message: string };
   session_started: StartSessionResponse;
   bot_typing: { session_id: string };
   analysis: { session_id: string; analysis: Analysis };

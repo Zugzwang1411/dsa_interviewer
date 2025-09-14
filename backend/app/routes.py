@@ -1,25 +1,26 @@
-from flask import Blueprint, request, jsonify
+from fastapi import APIRouter, HTTPException
 from .interviewer import LLMPoweredInterviewer
-from .utils import generate_session_id, format_response
 from .session_manager import session_manager
 from .config import Config
-import asyncio
-import json
-import os
+from .schemas import (
+    SessionStartRequest, SessionStartResponse, MessageRequest, MessageResponse,
+    SessionStateResponse, SessionEndResponse, SessionExportResponse,
+    SessionStatsResponse, CleanupResponse
+)
 import logging
+from datetime import datetime
 
 # Configure logging
 logger = logging.getLogger(__name__)
 config = Config()
 
-bp = Blueprint('api', __name__, url_prefix='/api')
+router = APIRouter()
 
-@bp.route('/session/start', methods=['POST'])
-def start_session():
+@router.post('/session/start', response_model=SessionStartResponse)
+async def start_session(request: SessionStartRequest):
     """Start a new interview session with enhanced error handling"""
     try:
-        data = request.get_json() or {}
-        candidate_name = data.get('candidate_name', 'Candidate')
+        candidate_name = request.candidate_name
         
         # Create new session using session manager
         session_id, interviewer = session_manager.create_session()
@@ -57,52 +58,50 @@ Ready to begin? Let's start this intelligent interview experience!"""
         
         logger.info(f"Started new session: {session_id} for candidate: {candidate_name}")
         
-        return jsonify({
-            "session_id": session_id,
-            "welcome": welcome,
-            "first_question": first_question,
-            "candidate_name": candidate_name
-        })
+        return SessionStartResponse(
+            session_id=session_id,
+            welcome=welcome,
+            first_question=first_question,
+            candidate_name=candidate_name
+        )
         
     except Exception as e:
         logger.error(f"Failed to start session: {e}")
-        return jsonify(format_response(False, message=f"Failed to start session: {str(e)}")), 500
+        raise HTTPException(status_code=500, detail=f"Failed to start session: {str(e)}")
 
-@bp.route('/session/<session_id>/message', methods=['POST'])
-def send_message(session_id):
+@router.post('/session/{session_id}/message', response_model=MessageResponse)
+async def send_message(session_id: str, request: MessageRequest):
     """Handle incoming messages for a session (WebSocket handles actual processing)"""
     try:
         interviewer = session_manager.get_session(session_id)
         if not interviewer:
-            return jsonify(format_response(False, message="Session not found")), 404
+            raise HTTPException(status_code=404, detail="Session not found")
         
-        data = request.get_json()
-        if not data or 'message' not in data:
-            return jsonify(format_response(False, message="Message is required")), 400
-        
-        message = data['message'].strip()
+        message = request.message.strip()
         if not message:
-            return jsonify(format_response(False, message="Message cannot be empty")), 400
+            raise HTTPException(status_code=400, detail="Message cannot be empty")
         
         logger.info(f"Received message for session {session_id}: {len(message)} characters")
         
-        return jsonify({
-            "status": "accepted",
-            "processing": True,
-            "message_length": len(message)
-        })
+        return MessageResponse(
+            status="accepted",
+            processing=True,
+            message_length=len(message)
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to process message for session {session_id}: {e}")
-        return jsonify(format_response(False, message=f"Failed to process message: {str(e)}")), 500
+        raise HTTPException(status_code=500, detail=f"Failed to process message: {str(e)}")
 
-@bp.route('/session/<session_id>/state', methods=['GET'])
-def get_session_state(session_id):
+@router.get('/session/{session_id}/state', response_model=SessionStateResponse)
+async def get_session_state(session_id: str):
     """Get current state of a session"""
     try:
         interviewer = session_manager.get_session(session_id)
         if not interviewer:
-            return jsonify(format_response(False, message="Session not found")), 404
+            raise HTTPException(status_code=404, detail="Session not found")
         
         state = interviewer.get_state()
         metadata = session_manager.session_metadata.get(session_id, {})
@@ -111,30 +110,35 @@ def get_session_state(session_id):
         state['session_metadata'] = metadata
         
         logger.info(f"Retrieved state for session {session_id}")
-        return jsonify(format_response(True, data=state))
+        return SessionStateResponse(
+            success=True,
+            data=state,
+            timestamp=datetime.now().isoformat()
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to get session state for {session_id}: {e}")
-        return jsonify(format_response(False, message=f"Failed to get session state: {str(e)}")), 500
+        raise HTTPException(status_code=500, detail=f"Failed to get session state: {str(e)}")
 
-@bp.route('/session/<session_id>/end', methods=['POST'])
-def end_session(session_id):
+@router.post('/session/{session_id}/end', response_model=SessionEndResponse)
+async def end_session(session_id: str):
     try:
-        if not has_session(session_id):
-            return jsonify(format_response(False, message="Session not found")), 404
-        
-        interviewer = get_session(session_id)
+        interviewer = session_manager.get_session(session_id)
+        if not interviewer:
+            raise HTTPException(status_code=404, detail="Session not found")
         
         if not interviewer.performance_data:
-            return jsonify({
-                "session_id": session_id,
-                "average_score": 0,
-                "total_questions": 0,
-                "followups_count": 0,
-                "strengths": [],
-                "weaknesses": [],
-                "recommendations": []
-            })
+            return SessionEndResponse(
+                session_id=session_id,
+                average_score=0,
+                total_questions=0,
+                followups_count=0,
+                strengths=[],
+                weaknesses=[],
+                recommendations=[]
+            )
         
         main_scores = [p['analysis']['score'] for p in interviewer.performance_data if not p['is_followup']]
         avg_score = sum(main_scores) / len(main_scores) if main_scores else 0
@@ -159,58 +163,74 @@ def end_session(session_id):
         if avg_score >= 6:
             recommendations.append("Continue practicing advanced problems")
             
-        return jsonify({
-            "session_id": session_id,
-            "average_score": round(avg_score, 1),
-            "total_questions": total_questions,
-            "followups_count": followups_count,
-            "strengths": strengths[:3],
-            "weaknesses": weaknesses[:3],
-            "recommendations": recommendations[:3]
-        })
+        return SessionEndResponse(
+            session_id=session_id,
+            average_score=round(avg_score, 1),
+            total_questions=total_questions,
+            followups_count=followups_count,
+            strengths=strengths[:3],
+            weaknesses=weaknesses[:3],
+            recommendations=recommendations[:3]
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify(format_response(False, message=f"Failed to end session: {str(e)}")), 500
+        raise HTTPException(status_code=500, detail=f"Failed to end session: {str(e)}")
 
-@bp.route('/session/<session_id>/export', methods=['GET'])
-def export_session(session_id):
+@router.get('/session/{session_id}/export', response_model=SessionExportResponse)
+async def export_session(session_id: str):
     """Export comprehensive session data"""
     try:
         interviewer = session_manager.get_session(session_id)
         if not interviewer:
-            return jsonify(format_response(False, message="Session not found")), 404
+            raise HTTPException(status_code=404, detail="Session not found")
         
         export_data = session_manager.export_session_data(session_id)
         if not export_data:
-            return jsonify(format_response(False, message="Failed to export session data")), 500
+            raise HTTPException(status_code=500, detail="Failed to export session data")
         
         logger.info(f"Exported session data for {session_id}")
-        return jsonify(format_response(True, data=export_data))
+        return SessionExportResponse(
+            success=True,
+            data=export_data,
+            timestamp=datetime.now().isoformat()
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to export session {session_id}: {e}")
-        return jsonify(format_response(False, message=f"Failed to export session: {str(e)}")), 500
+        raise HTTPException(status_code=500, detail=f"Failed to export session: {str(e)}")
 
-@bp.route('/sessions/stats', methods=['GET'])
-def get_session_stats():
+@router.get('/sessions/stats', response_model=SessionStatsResponse)
+async def get_session_stats():
     """Get overall session statistics"""
     try:
         stats = session_manager.get_session_stats()
         logger.info("Retrieved session statistics")
-        return jsonify(format_response(True, data=stats))
+        return SessionStatsResponse(
+            success=True,
+            data=stats,
+            timestamp=datetime.now().isoformat()
+        )
         
     except Exception as e:
         logger.error(f"Failed to get session stats: {e}")
-        return jsonify(format_response(False, message=f"Failed to get session stats: {str(e)}")), 500
+        raise HTTPException(status_code=500, detail=f"Failed to get session stats: {str(e)}")
 
-@bp.route('/sessions/cleanup', methods=['POST'])
-def cleanup_sessions():
+@router.post('/sessions/cleanup', response_model=CleanupResponse)
+async def cleanup_sessions():
     """Clean up expired sessions"""
     try:
         cleaned_count = session_manager.cleanup_expired_sessions()
         logger.info(f"Cleaned up {cleaned_count} expired sessions")
-        return jsonify(format_response(True, data={"cleaned_sessions": cleaned_count}))
+        return CleanupResponse(
+            success=True,
+            data={"cleaned_sessions": cleaned_count},
+            timestamp=datetime.now().isoformat()
+        )
         
     except Exception as e:
         logger.error(f"Failed to cleanup sessions: {e}")
-        return jsonify(format_response(False, message=f"Failed to cleanup sessions: {str(e)}")), 500
+        raise HTTPException(status_code=500, detail=f"Failed to cleanup sessions: {str(e)}")

@@ -1,10 +1,10 @@
-Flask>=2.0
-Flask-SocketIO
-Flask-CORS
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
 langchain
 langchain-openai
 openai
 python-dotenv
-eventlet
 SQLAlchemy
 langchain-community
+pydantic>=2.0.0

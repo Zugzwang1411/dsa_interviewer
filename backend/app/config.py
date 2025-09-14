@@ -6,9 +6,10 @@ load_dotenv()
 class Config:
     """Application configuration class with environment-based settings"""
     
-    # Core Flask settings
-    SECRET_KEY = os.getenv('FLASK_SECRET', 'dev-secret-key')
-    FLASK_ENV = os.getenv('FLASK_ENV', 'development')
+    # Core FastAPI settings
+    SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key')
+    APP_ENV = os.getenv('APP_ENV', 'development')
+    DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
     
     # Database configuration
     DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///dsa_interviewer.db')
@@ -24,21 +25,28 @@ class Config:
     SESSION_TIMEOUT = int(os.getenv('SESSION_TIMEOUT', '1800'))  # 30 minutes
     
     # WebSocket settings
-    SOCKETIO_CORS_ALLOWED_ORIGINS = os.getenv('CORS_ORIGINS', '*').split(',')
+    CORS_ORIGINS = os.getenv('CORS_ORIGINS', '*').split(',')
+    
+    # Server settings
+    HOST = os.getenv('HOST', '0.0.0.0')
+    PORT = int(os.getenv('PORT', '8000'))
     
     @classmethod
     def get_config(cls):
         """Return configuration as dictionary for backward compatibility"""
         return {
             'OPENAI_API_KEY': cls.OPENAI_API_KEY,
-            'FLASK_ENV': cls.FLASK_ENV,
-            'FLASK_SECRET': cls.SECRET_KEY,
+            'APP_ENV': cls.APP_ENV,
+            'SECRET_KEY': cls.SECRET_KEY,
             'LLM_MODEL': cls.LLM_MODEL,
             'DATABASE_URL': cls.DATABASE_URL,
             'LLM_TEMPERATURE': cls.LLM_TEMPERATURE,
             'MAX_FOLLOWUPS': cls.MAX_FOLLOWUPS,
             'QUESTIONS_PER_SESSION': cls.QUESTIONS_PER_SESSION,
             'SESSION_TIMEOUT': cls.SESSION_TIMEOUT,
+            'DEBUG': cls.DEBUG,
+            'HOST': cls.HOST,
+            'PORT': cls.PORT,
         }
 
 def get_config():
